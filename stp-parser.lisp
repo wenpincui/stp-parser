@@ -2,62 +2,41 @@
 
 (in-package #:stp-parser)
 
-(defun find-start (stream)
+(defun move-to-start (stream)
   (let ((start-regexp "^Data:$"))
-    (handler-case
-        (loop for line = (read-line stream)
-           while (not (cl-ppcre:all-matches start-regexp line))
-           finally (return t))
-      (condition (c) (declare (ignore c)) nil))))
+    (loop for line = (read-line stream)
+       until (all-matches start-regexp line))))
 
 (defun normalized-read-csv (line)
   (remove-if #'(lambda (x) (= 0 (length x))) (cdar (read-csv line))))
 
-(defun read-stp (file)
-  (with-open-file (s file)
-    (let ((signals (and (find-start s) (parse-elements (read-line s)))))
-      (loop for line = (read-line s nil) when line
-         do (mapcar #'(lambda (sig val)
-                        (vector-push-extend val (val sig)))
-                    signals
-                    (normalized-read-csv line))
-         while line)
-      signals)))
-
-(defclass stp-val ()
-  ((name
-    :accessor name
-    :initarg :name
-    :initform nil)
-   (val
-     :accessor val
-     :initarg :val
-     :initform (make-array 100 :adjustable t :fill-pointer 0))))
+(defun read-header (stream)
+  (progn
+    (move-to-start stream)
+    (mapcar #'strip-string (normalized-read-csv (read-line stream)))))
 
 (defun strip-string (str)
   (let ((pos (position #\| str :from-end t)))
-    (if pos
-        (subseq str (1+ pos))
-        str)))
-
-(defun parse-elements (line)
-  (let ((csv (normalized-read-csv line)))
-    (loop for name in csv
-       collect (make-instance 'stp-val :name (strip-string name)))))
+    (if pos (subseq str (1+ pos)) str)))
 
 (defun show-sig-name (signals)
   (loop for signal in signals
-       do (format t "~a~10t~%" (name signal))))
+       do (format t "~a~10t~%" signal)))
+
+(defun extract-inst (stream signals which)
+  (let ((pos (position which signals :test #'string=)))
+    (unless pos
+      (error "can't find signals, check your input."))
+    (loop for line = (read-line stream nil)
+       for time from 0 until (not line)
+       collect (mips-disassemble (nth pos (normalized-read-csv line))))))
 
 (defun query (csv-file &optional which)
-  (let* ((signals (read-stp csv-file)))
-    (when (null which)
-      (show-sig-name signals)
-      (return-from query nil))
-    (let ((sig (find-if #'(lambda (sig) (string= (name sig) which)) signals)))
-      (loop for val across (val sig)
-         for time from 0
-         do (format t "[~d]~8,0x~%" time (mips-disassemble val))))))
+  (with-open-file (csv-stream csv-file)
+    (let ((signals (read-header csv-stream)))
+      (if which
+          (extract-inst csv-stream signals which)
+          (show-sig-name signals)))))
 
 (defun mips-disassemble (mc)
   (with-output-to-string (inst)

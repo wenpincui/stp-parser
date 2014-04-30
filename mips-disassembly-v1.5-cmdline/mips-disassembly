@@ -1,0 +1,667 @@
+#!/usr/bin/perl
+use 5.010;
+use Term::ReadLine;
+
+#my $success = open INPUT, "<./inst_lib";
+my $success = open INPUT, "<./inst_lib_new";
+if (!$success) {
+	die "open input file failed\n";
+}
+
+my $i = 0;
+my $FILEMODE = "";
+my $parameter;
+my %Hash;
+my $term;
+
+sub print_title {
+	print ' 
+	######################################
+	#                                    #
+	#  Mips Machine Code to Disassemmbly #
+	#                                    #
+	#             Ver 1.5                #
+	#                                    #
+	#       by Elson @ClouderSemi        #
+	#                                    #
+	######################################
+	'."\n";
+}
+
+sub print_help {
+	print  "
+  Actions:
+	disassembly,d          machine code [option]
+	file,f                 filename     [option]
+	filemode,fm            newfilename 
+	close                  close opened file & leave filemode 
+
+  Shell Compatible:
+	ls                     list directory
+	clear                  clear screen
+	reset                  reset 
+	help,h                 help 
+	log                    version log
+	quit,q                 quit to shell
+
+  Options:
+	-b      binary
+	-d      decimal
+	-x      hexadecimal(default)
+	-o      show original binary code
+	-n      show row number 
+	-c      print instruction class	
+	-p      print discription	
+	\n";
+}
+
+sub print_log {
+	print  "
+  Main Features:
+	ver 0.1     Basic function for disassemble binary code.
+	ver 0.5     Add file dissassembling, options.
+	ver 1.0     Add filename completion, command history 
+	            and some unix operations.
+	ver 1.2     Add file mode.
+	ver 1.3     Optimize instruction showing, fixed some bugs
+	ver 1.5     Add mips32r2 and mips64 instructions
+	\n";
+}
+
+sub hex_to_bin {
+	my $input = @_[0];
+	my $output;
+	@bit = split //, $input;
+
+	foreach (@bit) {
+		$output .= "0000" if (/\b0\b/); 
+		$output .= "0001" if (/\b1\b/); 
+		$output .= "0010" if (/\b2\b/); 
+		$output .= "0011" if (/\b3\b/); 
+		$output .= "0100" if (/\b4\b/); 
+		$output .= "0101" if (/\b5\b/); 
+		$output .= "0110" if (/\b6\b/); 
+		$output .= "0111" if (/\b7\b/); 
+		$output .= "1000" if (/\b8\b/); 
+		$output .= "1001" if (/\b9\b/); 
+		$output .= "1010" if (/\b[aA]\b/); 
+		$output .= "1011" if (/\b[bB]\b/); 
+		$output .= "1100" if (/\b[cC]\b/); 
+		$output .= "1101" if (/\b[dD]\b/); 
+		$output .= "1110" if (/\b[eE]\b/); 
+		$output .= "1111" if (/\b[fF]\b/); 
+	}
+
+	$output;
+}
+
+sub bin_to_dec {
+	my $input = $_[0];
+	my $length = length($input);
+	my @input_split = split //, $input;
+	my $cur;
+	my $sum = 0;
+
+	foreach (0..$length-1) {
+		$cur = shift @input_split;
+		$sum *= 2;
+		$sum += $cur;
+	}
+
+	$sum;
+}
+
+sub bin_to_hex {
+	my $input = $_[0];
+	my $length = length($input);
+	my @input_split = split //, $input;
+	my $cur = $length;
+	my $output;
+	
+	while (($cur-4) >= 0 || ($cur > 0 && $cur <= 3)) {
+		if (($cur-4) >= 0) {
+			$cur -= 4;
+			$_ = substr($input, $cur, 4);
+		}
+		else {
+			$_ = substr($input, 0, $cur-1);
+			$cur -= 4;
+		}
+
+		$output = "0".$output if (/\b0000\b/ || /\b000\b/ || /\b00\b/ || /\b0\b/); 
+		$output = "1".$output if (/\b0001\b/ || /\b001\b/ || /\b01\b/ || /\b1\b/); 
+		$output = "2".$output if (/\b0010\b/ || /\b010\b/ || /\b10\b/); 
+		$output = "3".$output if (/\b0011\b/ || /\b011\b/ || /\b11\b/); 
+		$output = "4".$output if (/\b0100\b/ || /\b100\b/); 
+		$output = "5".$output if (/\b0101\b/ || /\b101\b/); 
+		$output = "6".$output if (/\b0110\b/ || /\b110\b/); 
+		$output = "7".$output if (/\b0111\b/ || /\b111\b/); 
+		$output = "8".$output if (/\b1000\b/); 
+		$output = "9".$output if (/\b1001\b/); 
+		$output = "a".$output if (/\b1010\b/); 
+		$output = "b".$output if (/\b1011\b/); 
+		$output = "c".$output if (/\b1100\b/); 
+		$output = "d".$output if (/\b1101\b/); 
+		$output = "e".$output if (/\b1110\b/); 
+		$output = "f".$output if (/\b1111\b/); 
+	}
+
+	$output;
+}
+
+sub and {
+	my $src = @_[0];
+	my $dst = @_[1];
+
+	my @src = split //, $src;
+	my @dst = split //, $dst;
+
+	my $num = @src;
+	my $ret = 0;
+
+	#print "srcnum = $num\n";
+	foreach (0..$num-1) {
+		#print "x: @src[$_] * @dst[$_] =".@src[$_] * @dst[$_]."\n";
+		if (@src[$_] =~ m/_/ || @dst[$_] =~ m/_/) {
+			next;
+		}
+
+		if (@src[$_] != @dst[$_]) {
+			return -1;
+		}
+		else {
+			$ret++;
+		}
+	}
+
+	return $ret;
+};
+
+my $num_cnt;
+my $output;
+sub parse_cmd {
+
+	my $orig_code = $_[0];
+
+	$flag = 0;
+
+	my $binary = &hex_to_bin($orig_code);
+	my $cmdbin = substr($binary, 0, 6);
+	my $restcmd = substr($binary, 6, 26);
+	my $hit_cnt = $Hash{$cmdbin}{"num"};;
+	my $find_num;
+
+	my $max = -1;
+	foreach (1..$hit_cnt) {
+		my $mask = $Hash{$cmdbin}{$_}{"mask"};
+
+		my $and_ret = &and($restcmd,$mask);
+		if ($and_ret != -1) {
+			if ($and_ret > $max) {
+				$max = $and_ret;
+				$find_num = $_;
+			}
+
+			$flag = 1;
+		}
+	}
+
+	if ($flag != 1) {
+		warn "ERROR: ($orig_code) Instruction Invalid\n";
+	}
+	else {
+		my $format = $Hash{$cmdbin}{$find_num}{"format"};
+		my $discription = $Hash{$cmdbin}{$find_num}{"discription"};
+		my $inst = $Hash{$cmdbin}{$find_num}{"inst"};
+		my $field = $Hash{$cmdbin}{$find_num}{"field"};
+		my $inst_class = $Hash{$cmdbin}{$find_num}{"inst_class"};
+		my $mips_subclass = $Hash{$cmdbin}{$find_num}{"mips_subclass"};
+
+		########## parse parameters ##########
+		if ($FILEMODE =~ m/[file mode]/) {	# file mode 
+			$output = "OUTPUT";
+		}
+		else {
+			$output = " ";
+		}
+
+		my $i = 0;
+		@inst_split = split / /, $inst;
+		@field_split = split / /, $field;
+
+		if ($parameter =~ m/n/) {	# print original machine code
+			$num_cnt++;
+			print $output " $num_cnt:";
+			print " $num_cnt:";
+		}
+
+		my $num_cnt_length = length($num_cnt);
+
+		if ($parameter =~ m/o/) {	# print original machine code
+			print $output " " x (5-$num_cnt_length)."$orig_code  ";
+			print " " x (5-$num_cnt_length)."$orig_code  ";
+		}
+
+		# FIXME
+		#my $format_length = length($format);
+		#print $output "  $format";
+		#print "  $format";
+		#print $output " " x (30-$format_length) .":";
+		#print " " x (30-$format_length) .":";
+		my $append = "";
+
+		foreach (0..@inst_split-1) {
+            $off = $_;
+			if (@inst_split[$off] =~ m/[A-Za-z_]+/) {
+
+				##### parse general register ####
+				if (@inst_split[$off] =~ m/\brt\b/) {
+					my $reg_num = &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+					$format =~ s/rt/r$reg_num/;	# substitute with rx
+					#printf $output "rt=r%d  ", $reg_num;
+					#printf 	"rt=r%d  ", $reg_num;
+				}
+				elsif (@inst_split[$off] =~ m/\brs\b/) {
+					my $reg_num = &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+					$format =~ s/rs/r$reg_num/;	# substitute with rx
+					#printf $output "rs=r%d  ", &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+					#printf 	"rs=r%d  ", &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+				}
+				elsif (@inst_split[$off] =~ m/\brd\b/) {
+					my $reg_num = &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+					$format =~ s/rd/r$reg_num/;	# substitute with rx
+					#printf $output "rd=r%d  ", &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+					#printf 	"rd=r%d  ", &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+				}
+				elsif (@inst_split[$off] =~ m/\bfs\b/) {
+					my $reg_num = &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+					$format =~ s/fs/f$reg_num/;	# substitute with fx
+					#printf $output "fs=r%d  ", &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+					#printf 	"fs=r%d  ", &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+				}
+				elsif (@inst_split[$off] =~ m/\bfd\b/) {
+					my $reg_num = &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+					$format =~ s/fd/f$reg_num/;	# substitute with fx
+					#printf $output "fd=r%d  ", &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+					#printf 	"fd=r%d  ", &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+				}
+				elsif (@inst_split[$off] =~ m/\bft\b/) {
+					my $reg_num = &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+					$format =~ s/ft/f$reg_num/;	# substitute with fx
+					#printf $output "ft=r%d  ", &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+					#printf 	"ft=r%d  ", &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+				}
+				elsif (@inst_split[$off] =~ m/\bbase\b/) {
+					my $reg_num = &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+					$format =~ s/base/r$reg_num/;	# substitute with rx
+					#printf $output "base=r%d  ", &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+					#printf 	"base=r%d  ", &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+				}
+				elsif (@inst_split[$off] =~ m/\boffset\b/) {
+					if ($parameter =~ m/b/) {
+						my $offset = substr($restcmd, $i, @field_split[$off]);
+						$format =~ s/offset/b'$offset/;	
+					}
+					elsif ($parameter =~ m/d/) {
+						my $offset = &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+						$format =~ s/offset/$offset/;	
+					}
+					else { #if ($parameter =~ m/x/) {
+						my $offset = &bin_to_hex(substr($restcmd, $i, @field_split[$off]));
+						$format =~ s/offset/0x$offset/;	
+					}
+				}
+                elsif (@inst_split[$off] =~ m/\bsa\b/) {
+                    if ($parameter =~ m/b/) {
+			    	    my $reg_num = substr($restcmd, $i, @field_split[$off]);
+                	    $format =~ s/sa/b'$reg_num/;	# substitute with immediate
+                    }
+                    elsif ($parameter =~ m/d/) {
+			    	    my $reg_num = &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+                	    $format =~ s/sa/$reg_num/;	    # substitute with immediate
+                    }
+                    else { #($parameter =~ m/d/) {
+			    	    my $reg_num = &bin_to_hex(substr($restcmd, $i, @field_split[$off]));
+                	    $format =~ s/sa/0x$reg_num/;	# substitute with immediate
+                    }
+                }
+				elsif (@inst_split[$off] =~ m/\bimmediate\b/) {
+					if ($parameter =~ m/b/) {
+						my $offset = substr($restcmd, $i, @field_split[$off]);
+						$format =~ s/immediate/b'$offset/;	
+					}
+					elsif ($parameter =~ m/d/) {
+						my $offset = &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+						$format =~ s/immediate/$offset/;	
+					}
+					else { #if ($parameter =~ m/x/) {
+						my $offset = &bin_to_hex(substr($restcmd, $i, @field_split[$off]));
+						$format =~ s/immediate/0x$offset/;	
+					}
+				}
+				elsif (@inst_split[$off] =~ m/\bindex\b/) {
+					if ($parameter =~ m/b/) {
+						my $offset = substr($restcmd, $i, @field_split[$off]);
+						$format =~ s/index/b'$offset/;	
+					}
+					elsif ($parameter =~ m/d/) {
+						my $offset = &bin_to_dec(substr($restcmd, $i, @field_split[$off]));
+						$format =~ s/index/$offset/;	
+					}
+					else { #if ($parameter =~ m/x/) {
+						my $offset = &bin_to_hex(substr($restcmd, $i, @field_split[$off]));
+						$format =~ s/index/0x$offset/;	
+					}
+				}
+				else {
+					my $num = substr($restcmd, $i, @field_split[$off]);
+            
+					#print $output @inst_split[$off];
+					#print @inst_split[$off];
+					$append .= @inst_split[$off];
+					if ($parameter =~ m/b/) {
+						#print $output "=". $num;
+						#print "=". $num;
+						$append .= ("=". $num);
+					}
+					elsif ($parameter =~ m/d/) {
+						#printf $output "=%d", &bin_to_dec($num);
+						#printf "=%d", &bin_to_dec($num);
+						$append .= ("=". &bin_to_dec($num));
+					}
+					elsif ($parameter =~ m/x/) {
+						#printf $output "=0x%x", &bin_to_dec($num);
+						#printf "=0x%x", &bin_to_dec($num);
+						$append .= ("=0x". &bin_to_hex($num));
+					}
+					else {
+						#printf $output "=0x%x", &bin_to_dec($num);
+						#printf "=0x%x", &bin_to_dec($num);
+						$append .= ("=0x". &bin_to_hex($num));
+					}
+					#print $output "  ";
+					#print "  ";
+					$append .= " ";
+				}
+			}
+
+			#$i += @field_split[$_];        # I even dont know why this wont work properly
+			$i += @field_split[$off];
+		}   # end foreach
+
+		my $format_length = length($format);
+		print $output "  $format";
+		print "  $format";
+		print $output " " x (30-$format_length) .":";
+		print " " x (30-$format_length) .":";
+
+        # print class
+		if ($parameter =~ m/c/) {
+            $append = "[$mips_subclass][$inst_class] ".$append;
+		}
+
+		print $output "$append";
+		print 	      "$append";
+		#print "$format\n";
+
+        # print descriptor
+		if ($parameter =~ m/p/) {
+			print $output "  $discription";
+			print "  $discription";
+		}
+
+		print $output "\n";
+		print "\n";
+
+	}	# endif
+}
+
+########## Build Database ##########
+while (<INPUT>) {
+	chomp;
+
+	@raw_split = split /#/, $_;
+
+	$i++;
+	my $mips_subclass    = @raw_split[0];
+	my $inst_class       = @raw_split[1];
+	my $pagenum          = @raw_split[2];
+	my $inst             = @raw_split[3];
+	my $field            = @raw_split[4];
+	my $format           = @raw_split[5];
+	my $discription      = @raw_split[6];
+
+	#print "$pagenum:inst: $inst\n";
+
+	my @inst_split = split / /, $inst;
+	my @field_split = split / /, $field;
+
+	########### record CMD and CMDBIN ##########
+	my $CMD;
+	my $CMDBIN; 
+
+	$CMD = shift @inst_split;
+	$CMDBIN = shift @inst_split;
+
+	#print "CMD = $CMD, CMDBIN = $CMDBIN\n";
+	$inst = join " ", @inst_split;
+
+	my $mask;
+	if (@inst_split != @field_split) {
+		warn "################ WRONG INSTRUCTION! ################\n";
+	}
+	foreach (0..@inst_split) {
+		if (@inst_split[$_] =~ m/[A-Za-z_]+/) {
+			$mask .= "_" x @field_split[$_];
+		}
+		else {
+			$mask .= @inst_split[$_];
+		}
+	}
+
+	########### add to Hash ##########
+	if (exists $Hash{$CMDBIN}) {
+		$Hash{$CMDBIN}{"num"}++;
+		my $cur_num = $Hash{$CMDBIN}{"num"};
+		#print "cur_num: $cur_num\n";
+
+		$Hash{$CMDBIN}{$cur_num} = {
+			"cmd" => $CMD,
+			"inst" => $inst,
+			"field" => $field,
+			"mask" => $mask,
+			"format" => $format,
+			"discription" => $discription,
+            "mips_subclass" => $mips_subclass,
+            "inst_class" => $inst_class,
+			"pagenum" => $pagenum,
+		};
+	}
+	else {
+		$Hash{$CMDBIN} = {
+			"cmd" => $CMD,
+			"num" => 1,
+		};
+
+		$Hash{$CMDBIN}{1} = {
+			"cmd" => $CMD,
+			"inst" => $inst,
+			"field" => $field,
+			"mask" => $mask,
+			"format" => $format,
+			"discription" => $discription,
+            "mips_subclass" => $mips_subclass,
+            "inst_class" => $inst_class,
+			"pagenum" => $pagenum,
+		};
+	}
+}	# end while 
+
+close OUTPUT;
+
+########## Waiting for command ##########
+#&print_title;
+#&print_help;
+
+#$term = new Term::ReadLine 'Machine_to_Disassembly';
+
+#while (defined ($_ = $term->readline("prompt$FILEMODE >"))) {
+#	chomp;
+	if (@ARGV < 1) {
+		exit;
+	}
+
+	$_ = $ARGV[0];
+	$parameter = undef;
+
+	my @inst_split = split / /, $_;
+	my $inst_raw;
+	foreach (@inst_split) {
+		if ($_ =~ m/^-([a-z])/) {
+			$parameter .= $1;
+		}
+		else {
+			$inst_raw = $inst_raw." ".$_;
+		}
+	}
+
+	my $inst;
+	$num_cnt = 0;
+	##### single instruction #####
+#	if ($inst_raw =~ m/\bd\b/ || $inst_raw =~ m/\bdisassembly\b/) {
+		if (m/\b0x([0-9a-fA-F]{8})\b/ || m/\b([0-9a-fA-F]{8})\b/) {
+			$inst = $1;
+			&parse_cmd($inst);
+		} else {
+			warn "wrong inst: $_"."\n";
+		}
+#	}
+	##### load file #####
+#	elsif ($inst_raw =~ m/\bf\b/ || $inst_raw =~ m/\bfile\b/) {
+#		my $filename;
+#		my $success;
+#
+#		#if (m<([./][./_a-zA-Z0-9]+)>) {
+#		if (m<( [./_a-zA-Z0-9]+)>) {
+#			#print "filename = $1\n";
+#			$filename = $1;
+#		}
+#		else {
+#			warn "ERROR: FileName Invalid\n";
+#		}
+#
+#		my $success = open INSTFILE, "<".$filename;
+#		if (!$success) {
+#			 warn "ERROR: Open $filename Failed\n";
+#		}
+#
+#		while (<INSTFILE>) {
+#			if (m/\b([0-9a-fA-F]{8})\b/) {
+#				$inst = $1;
+#			}
+#
+#			&parse_cmd($inst);
+#		}
+#
+#		close INSFILE;
+#		next;
+#	}
+#	##### quit to shell #####
+#	elsif ($inst_raw =~ m/\bq\b/ || $inst_raw =~ m/\bquit\b/) {
+#		last;
+#	}
+#	##### quit to shell #####
+#	elsif ($inst_raw =~ m/\bh\b/ || $inst_raw =~ m/\bhelp\b/) {
+#		&print_help;
+#		next;
+#	}
+#	##### clear screen #####
+#	elsif ($inst_raw =~ m/\bclear\b/) {
+#		system "clear";
+#		next;
+#	}
+#	##### list dir #####
+#	elsif ($inst_raw =~ m/\bls\b/) {
+#		system "$inst_raw";
+#		print "\n";
+#		next;
+#	}
+#	##### file mode #####
+#	elsif ($inst_raw =~ m/\bfilemode\b/ || $inst_raw =~ m/\bfm\b/) {
+#
+#		my $filename;
+#		my $dirname;
+#		my $success;
+#
+#		if (m< ([./_a-zA-Z0-9]+)>) {
+#			$filename = $1;
+#
+#			if ($filename =~ m</$>) {
+#				warn "WARNING: Not a valid filename\n";
+#				next;
+#			}
+#
+#			if (-e $filename) {
+#				warn "WARNING: File exists, continue ? (Y/N)\n";
+#
+#				if (<STDIN> =~ m/\b[Yy]\b/) {
+#					print "'Y' has been selected\n";
+#				}
+#				else {
+#					print "'N' has been selected\n";
+#					next;
+#				}
+#			}
+#			elsif ($filename =~ m<(.*)/>) {	# include directory 
+#				$directory = $1;
+#
+#				if (-e $directory) {
+#					system "touch $filename";	# touch file
+#				}
+#				else {
+#					system "mkdir $directory -p";
+#					system "touch $filename";	# touch file
+#				}
+#			}
+#
+#			$FILEMODE = "[file mode]";	# add file mode
+#
+#			open OUTPUT, "> $filename";	# open output file
+#		}
+#		else {
+#			warn "ERROR: Wrong FileName\n";
+#		}
+#
+#        #print "\n";
+#		next;
+#	}
+#	##### reset #####
+#	elsif ($inst_raw =~ m/\breset\b/) {
+#		&print_title;
+#		&print_help;
+#		next;
+#	}
+#	##### close #####
+#	elsif ($inst_raw =~ m/\bclose\b/) {
+#		print "CLose working file\n";
+#		$FILEMODE = "";
+#		close OUTPUT;
+#		next;
+#	}
+#	##### log #####
+#	elsif ($inst_raw =~ m/\blog\b/) {
+#		&print_log;
+#		next;
+#	}
+#	##### other error name #####
+#	elsif ($inst_raw =~ m/.+/) {
+#		warn "ERROR: Unsupported Command\n";
+#		&print_help;
+#		next;
+#	}
+#	else {
+#		next;
+#	}
+
+#	$num_cnt = 0;
+#}
